@@ -1,0 +1,4 @@
+git_url "git@github.com:Tayphoon/Certificates.git"
+git_branch "App"
+
+type "development" # The default type, can be: appstore, adhoc or development

@@ -1,0 +1,27 @@
+apple_id 'APPLE_ID'
+team_name 'TEAM_NAM'
+team_id 'TEAM_ID'
+
+for_platform :ios do
+
+  for_lane :archive do
+    app_identifier 'com.tayphoon.app'
+  end
+
+  for_lane :testing do
+    app_identifier 'com.tayphoon.app'
+  end
+
+  for_lane :staging do
+    app_identifier 'com.tayphoon.app'
+  end
+
+  for_lane :build_tests do
+    app_identifier 'com.tayphoon.app'
+  end
+
+  for_lane :premain_test_dev do
+    app_identifier 'com.tayphoon.app'
+  end
+
+end

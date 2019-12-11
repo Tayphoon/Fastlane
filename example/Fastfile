@@ -1,0 +1,143 @@
+############################ IMPORTS ############################
+import_from_git(url: 'git@github.com:Tayphoon/Fastlane.git',
+               path: 'fastlane/Fastfile')
+
+
+######################### PRECONDITIONS #########################
+default_platform :ios
+platform :ios do
+
+  ######################### PUBLIC LANES ##########################
+
+  desc "Submit a new App build from develop branch (testing flow)"
+  lane :archive do |options|
+
+    appName = options[:appName] || $appName
+    xcodeproj = options[:xcodeproj] || "./#{appName}.xcodeproj"
+    versionNumber = options[:version_number] || get_version_number(xcodeproj: xcodeproj)
+    outputDirectory = options[:output_directory] || "archive"
+
+    appIdentifier = options[:app_identifier] || CredentialsManager::AppfileConfig.try_fetch_value(:app_identifier)
+    configuration = options[:configuration] || "Adhoc"
+    exportMethod = options[:export_method] || "ad-hoc"
+
+    #Building the app file
+    ipaPath = buildConfiguration(
+      output_directory: outputDirectory,
+      configuration: configuration,
+      export_method: exportMethod
+    )
+
+    UI.message("App archived at path #{ipaPath}\n")
+
+    deployURL = options[:deploy_url] || ENV['DEPLOY_URL']
+
+    plistPath = options[:plist_path] || "./#{appName}/Supporting Files/Info.plist"
+
+    buildNumber = get_info_plist_value(
+        path: plistPath,
+        key: 'CFBundleVersion'
+    )
+
+    adhoc_html_generator(ipa_path: ipaPath,
+                         app_identifier: appIdentifier,
+                         app_name: appName,
+                         build_version: "#{versionNumber}.#{buildNumber}",
+                         output_directory: outputDirectory,
+                         base_url: deployURL
+    )
+
+  end
+
+
+  desc "Submit a new App build from develop branch to Fabric (testing flow)"
+  lane :testing do |options|
+
+    configuration = options[:configuration] || "Release"
+    exportMethod = options[:export_method] || "app-store"
+
+    buildConfiguration(
+      configuration: configuration,
+      export_method: exportMethod
+    )
+
+    fabric()
+
+  end
+
+  desc "Submit a new App build from development branch to Testflight (stage flow)"
+  lane :staging do |options|
+
+    buildConfiguration()
+
+    appleTestflight()
+
+  end
+
+  desc "Run tests"
+  lane :build_tests do |options|
+    outputDirectory = options[:output_directory] || "build/reports"
+
+    runTests(
+      scheme: "AppUnitTests",
+      output_directory: outputDirectory
+    )
+
+  end
+
+  lane :premain_test_dev do |options|
+
+    # Building the ipa file
+
+    appIdentifier = options[:app_identifier] || CredentialsManager::AppfileConfig.try_fetch_value(:app_identifier)
+    configuration = options[:configuration] || "Release"
+    exportMethod = options[:export_method] || "development"
+
+    buildConfiguration(
+      configuration: configuration,
+      export_method: exportMethod,
+      outputDirectory: "archives"
+    )
+
+    #Setup device id for instal and debug actions
+    #Actions.lane_context['DEVICE_ID'] = "24234adsd32349adasdasd9asdas"
+
+    #Install ipa file
+    idevice_install(
+      ipa_path: "archives/#{options[:scheme]}.ipa"
+    )
+
+    log_file = "premain_out.txt"
+
+    #Remove log file if exists
+    FileUtils.rm_rf("../#{log_file}")
+
+    #Cold start
+    idevice_debug(
+      extra: "DYLD_PRINT_STATISTICS=1",
+      bundle_id: app_identifier,
+      log_file: log_file
+    )
+
+    #Warm start
+    idevice_debug(
+      extra: "DYLD_PRINT_STATISTICS=1",
+      bundle_id: app_identifier,
+      log_file: log_file
+    )
+
+    idevice_debug(
+      extra: "DYLD_PRINT_STATISTICS=1",
+      bundle_id: app_identifier,
+      log_file: log_file
+    )
+
+    idevice_debug(
+      extra: "DYLD_PRINT_STATISTICS=1",
+      bundle_id: app_identifier,
+      log_file: log_file
+    )
+
+  end
+
+end

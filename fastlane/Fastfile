@@ -1,0 +1,149 @@
+$appName = File.basename(Dir['../*.xcworkspace'].first, '.*')
+
+#Private lanes exluded from full build processing (do not sart additional setup)
+$excludedLanes = [:match_all, :fabric, :apple_testflight]
+
+before_all do |lane, options|
+  ENV["FASTLANE_XCODE_LIST_TIMEOUT"] = "120"
+
+  unless $excludedLanes.include?(lane)
+    cocoapods(
+      try_repo_update_on_error: true
+    )
+  end
+
+end
+
+after_all do |lane, options|
+
+end
+
+######################### PUBLIC LANES ##########################
+
+lane :match_all do |options|
+
+  match(readonly:true, type:"development")
+  match(readonly:true, type:"adhoc")
+  match(readonly:true, type:"appstore")
+
+end
+
+######################### PRIVATE LANES ##########################
+
+private_lane :buildConfiguration do |options|
+
+  # Setting gym options
+  configuration = options[:configuration] || "Release"
+  export_method = options[:export_method] || "app-store"
+  appName = options[:appName] || $appName
+  scheme = options[:scheme] || appName
+  uploadToFabric = options[:uploadToFabric] || true
+  icloudEnvironment = options[:iCloudContainerEnvironment] || ""
+  exportOptions = icloudEnvironment.to_s.empty? ? {} : {iCloudContainerEnvironment: icloudEnvironment}
+  exportOptions[:compileBitcode] = options[:compileBitcode] || false
+  outputDirectory = options[:output_directory] || "./archive"
+  workspace = options[:workspace] || "./#{appName}.xcworkspace"
+  output_name = options[:output_name] || "#{appName}.ipa"
+  archive_path = options[:archive_path] || "./"
+
+  ipaPath = gym(
+    clean: true,
+    workspace: workspace,
+    scheme: scheme,
+    archive_path: archive_path,
+    output_directory: outputDirectory,
+    output_name: output_name,
+    configuration: configuration,
+    export_method: export_method,
+    export_options: exportOptions,
+    skip_package_ipa: !uploadToFabric
+  )
+
+  ipaPath
+end
+
+desc "Run tests"
+private_lane :runTests do |options|
+  appName = options[:appName] || $appName
+  scheme = options[:scheme] || appName
+  outputDirectory = options[:output_directory] || "build/reports"
+  devices = options[:devices] || []
+
+  scan(
+    scheme: scheme,
+    output_directory: outputDirectory,
+    output_files: 'index.html',
+    output_types: 'html',
+    skip_slack: is_ci?,
+    clean: true,
+    code_coverage: true,
+    devices: devices
+  )
+
+end
+
+desc "Prepares the build and uploads it to Fabric"
+private_lane :fabric do |options|
+
+  appName = options[:appName] || $appName
+  token = sh("cat ../#{appName}.xcodeproj/project.pbxproj | grep 'Fabric/run' | awk '{print $4}' | tr -d '\\n'")
+  secret = sh("printf `cat ../#{appName}.xcodeproj/project.pbxproj | grep 'Fabric/run' | awk '{print $5}' | sed 's/..$//'` | tr -d '\\n'")
+
+  releaseNotesFile = "release-notes.txt"
+  sh("touch ../#{releaseNotesFile}")
+
+  # Setting crashlytics options
+  crashlyticsGroups = options[:fabric_groups] || "testers"
+  envCrashlyticsGroups = ENV['FABRIC_GROUPS']
+  crashlyticsGroups += ",#{envCrashlyticsGroups}" if envCrashlyticsGroups && !envCrashlyticsGroups.empty?
+  ipa_path = options[:ipa_path] || "./archive/#{appName}.ipa"
+  dsym_path = options[:dsym_path] || "./archive/#{appName}.app.dSYM.zip"
+
+  crashlytics(
+    ipa_path: ipa_path,
+    crashlytics_path: "./Pods/Crashlytics/submit",
+    api_token: token,
+    build_secret: secret,
+    notes_path: releaseNotesFile,
+    groups: crashlyticsGroups
+  )
+
+  upload_symbols_to_crashlytics(
+    dsym_path: dsym_path,
+    api_token: token
+  )
+
+end
+
+desc "Prepares the build and uploads it to Testflight"
+private_lane :appleTestflight do |options|
+
+  # Uploading the final IPA file to Testflight (without distribution)
+  ENV["DELIVER_ITMSTRANSPORTER_ADDITIONAL_UPLOAD_PARAMETERS"] = "-t DAV"
+  pilot(skip_submission: true, skip_waiting_for_build_processing:true)
+
+end
+
+private_lane :plistInfoPath do |options|
+
+  # Assign folder from parameter or search for xcodeproj file
+  folder = params[:xcodeproj] || Dir["*.xcodeproj"].first
+
+  if params[:scheme]
+    project = Xcodeproj::Project.open(folder)
+    scheme = project.native_targets.detect { |target| target.name == params[:scheme] }
+    UI.user_error!("Couldn't find scheme named '#{params[:scheme]}'") unless scheme
+
+    params[:plist_path] = scheme.build_configurations.first.build_settings["INFOPLIST_FILE"]
+    UI.user_error!("Scheme named '#{params[:scheme]}' doesn't have a plist file") unless params[:plist_path]
+    params[:plist_path] = params[:plist_path].gsub("$(SRCROOT)", ".")
+  end
+
+  if params[:plist_path].nil?
+    UI.user_error!("You must specify either a plist path or a scheme")
+  end
+
+  # Read existing plist file
+  info_plist_path = File.join(folder, "..", params[:plist_path])
+  info_plist_path
+end
